@@ -3,9 +3,11 @@ import Control.Concurrent
 import Data.Sequence
 
 main = do
-  redcodeProg <- readFile "./redcodeProg/Imp.txt"
+  redcodeProg <- readFile "./redcodeProg/Dwarf.txt"
   let x = lines redcodeProg
-  putStrLn $ show x
+  let input = Prelude.filter stripComments x
+--  let words2 = map words input
+  putStrLn $ show input
   let core = fromList [getCoreAddr 1, getCoreAddr 2]
   m <- newMVar $ core
   communicate 1 m
@@ -27,6 +29,13 @@ communicate n m = do
     putStrLn (show n ++ " received " ++ show seq1)
     putStrLn $ show n ++ " sending"
     putMVar m $ update 0 (getCoreAddr n) seq1
+
+stripComments:: String -> Bool
+stripComments "" = False
+stripComments s
+  | head s == ';' = False
+  | otherwise = True
+
 --MARS simulator data types
 data Core = Core (Seq CoreAddr)
   deriving (Show,Read)
