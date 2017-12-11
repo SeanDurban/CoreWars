@@ -4,26 +4,22 @@ import Data.Sequence
 
 main = do
   redcodeProg <- readFile "./redcodeProg/Dwarf.txt"
-  let x = lines redcodeProg
-  let input = Prelude.filter stripComments x
---  let words2 = map words input
-  putStrLn $ show input
+  let progIn = lines redcodeProg
+  let input = Prelude.filter stripComments progIn
+  let inputFiltered = map (Prelude.filter (/= ',')) input
+  let moves =  map words inputFiltered
+  putStrLn $ show moves
   let core = fromList [getCoreAddr 1, getCoreAddr 2]
   m <- newMVar $ core
-  communicate 1 m
-  communicate 2 m
-  communicate 3 m
+--  communicate 1 m
+  --communicate 2 m
+  --communicate 3 m
   communicate 4 m
   communicate 0 m
   threadDelay (10^5)
-  --forkIO (do putMVar m 'a'; putMVar m 'b')
-  --c <- takeMVar m
-  --print c
-  --c <- takeMVar m
-  --print c
---communicate :: Int -> MVar
+--end main
+
 communicate n m = do
---  m <- newEmptyMVar
   forkIO $ do
     seq1 <- takeMVar m
     putStrLn (show n ++ " received " ++ show seq1)
@@ -35,6 +31,31 @@ stripComments "" = False
 stripComments s
   | head s == ';' = False
   | otherwise = True
+
+--Redcode prog parser
+redcodeParser :: [[String]] -> Int -> Prog
+redcodeParser moves progNo =
+  Prog progNo 0 $ movesParser moves
+
+movesParser :: [[String]] -> [Move]
+movesParser [] = []
+movesParser (move:(moves)) =
+  (moveParser move) : movesParser moves
+
+
+moveParser :: [String] -> Move
+moveParser move
+  | instr == "DAT" = Move DAT fieldA fieldB
+  | instr == "ADD" = Move ADD fieldA fieldB
+  where
+    instr = head move
+    fieldA = fieldAParser ""
+    fieldB = fieldBParser ""
+
+fieldAParser :: String -> Field
+fieldAParser _ = Empty
+fieldBParser :: String -> Field
+fieldBParser _ = Empty
 
 --MARS simulator data types
 data Core = Core (Seq CoreAddr)
@@ -56,8 +77,9 @@ getCoreAddr:: Int -> CoreAddr
 getCoreAddr n = CoreAddr DAT Empty $ Field Indirect n
 
 --redcode data types
-
-data Prog = Prog Int [Move]
+--First in is the progNo
+--Second Int is the curIndex in MARS
+data Prog = Prog Int Int [Move]
   deriving (Show, Read)
 data Move = Move Instr Field Field
   deriving (Show, Read)
