@@ -17,10 +17,10 @@ main = do
   m <- newMVar $ core2
 
   index <- newMVar $ 1
-  index2 <- newMVar $ 46
-  index3 <- newMVar $ 38
+  index2 <- newMVar $ 5
+  index3 <- newMVar $ 10
   runRedcode 1 m index
-  --runRedcode 2 m index2
+  runRedcode 2 m index2
   --runRedcode 3 m index3
 
   threadDelay (10^8)
@@ -49,15 +49,33 @@ runRedcode pNo coreMvar indexMvar= do
       putStrLn $ "Prog"++show pNo ++ " acquired core\n"
     --  instruction <- readInstruction i pNo core
     --  let i= execute instruction core
-      let curInstr = index core curI
+      let curInstr = index core (curI `mod` 15)
       putStrLn $ " Instruction at i " ++ show curInstr ++ "\n"
-      let updatedCore = executeInstr core curI
+  --    let updatedCore = executeInstr core curI
       let index2 = (curI+1) `mod` 15
-      putMVar coreMvar $ update 0 sampleCoreAddr core
+      test coreMvar $ update 0 sampleCoreAddr core
+    --  putMVar coreMvar $ update 0 sampleCoreAddr core
       putMVar indexMvar index2
       putStrLn $ "Prog"++show pNo ++ " released core " ++ show index2 ++ "\n"
       --release core and sleep to avoid starvation
       threadDelay(10^7) --could make this random
+
+test coreMvar core =
+  putMVar coreMvar core
+
+applyAddrMode :: Field -> Int -> Seq CoreAddr ->Int
+applyAddrMode (Field Immed n) curI core = curI + n
+applyAddrMode (Field Indirect n) curI core =  --want to go get value of that addr
+  let
+    instr = index core (curI+n)  --get coreInstr at curI +n
+    instrVal = 0 --val = extractVal instr
+  in curI + instrVal
+applyAddrMode (Field Direct n) curI core = curI + n
+applyAddrMode (Field AutoDec n) curI core = --n and treated as indirect then decr value at n
+  let
+    instr = index core (curI+n)  --get coreInstr at curI +n
+    instrVal = 0 --val = extractVal instr -1
+  in curI + instrVal
 
 executeInstr :: Seq CoreAddr -> Int -> Seq CoreAddr
 executeInstr core curI
@@ -69,12 +87,12 @@ executeInstr core curI
         fieldB = Empty
 
 extractAField :: CoreAddr -> Int
-extractAField _ (Field Direct n) _ = n
-extractAField _ _ _ = -1
+--extractAField _ (Field Direct n) _ = n
+extractAField _ = -1
 
 extractInstr :: CoreAddr -> Instr
-extractInstr MOV a b = MOV
-extractInstr _ _ _ = DAT
+--extractInstr MOV a b = MOV
+extractInstr _ = DAT
 
 sampleCoreAddr = CoreAddr DAT Empty $ Field Indirect 3
 
@@ -147,13 +165,13 @@ data CoreAddr = CoreAddr Instr Field Field
   deriving (Show, Read)
 
 data Instr = DAT | MOV | ADD | SUB | JMP | JMZ | JMN | DJN | CMP | SPL
-  deriving (Show, Read)
+  deriving (Show, Read, Eq)
 
 data Field = Field AddrMode Int | Empty
   deriving (Show, Read)
 
-data AddrMode = Immed | Indirect | Direct | AutoDec -- | # | < | Empty
-  deriving (Show, Read)
+data AddrMode = Immed | Indirect | Direct | AutoDec
+  deriving (Show, Read, Eq)
 
 getCoreAddr:: Int -> CoreAddr
 getCoreAddr n = CoreAddr ADD (Field Direct 0) (Field Direct 1)
