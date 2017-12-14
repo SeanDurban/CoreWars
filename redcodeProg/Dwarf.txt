@@ -3,7 +3,7 @@
 ;author A. K. Dewdney
 ;assert CORESIZE % 5 == 0
 
-ADD	#5,	-1
-MOV	#0,	@-2
+ADD	#5,	3
+MOV	#0,	@2
 JMP	-2
 DAT     -1
