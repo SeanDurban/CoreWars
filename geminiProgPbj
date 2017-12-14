@@ -1,0 +1,11 @@
+Prog 1 0
+[Move DAT Empty (Field Direct 0),
+Move DAT Empty (Field Direct 99),
+Move MOV (Field Indirect (-2)) (Field Indirect (-1)),
+Move DAT (Field Direct (-3)) (Field Immed 9),
+Move JMP (Field Direct 4) Empty,
+Move ADD (Field Immed 1) (Field Direct (-5)),
+Move ADD (Field Immed 1) (Field Direct (-5)),
+Move JMP (Field Direct (-5)) Empty,
+Move MOV (Field Immed 99) (Field Direct 93),
+Move JMP (Field Direct 93) Empty]
