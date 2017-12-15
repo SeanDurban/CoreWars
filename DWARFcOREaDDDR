@@ -1,4 +1,0 @@
-CoreAddr ADD (Field Immed 5) (Field Direct 3)
-CoreAddr MOV (Field Immed 0) (Field Indirect 2)
-CoreAddr JMP (Field Direct (-2)) Empty
-CoreAddr DAT Empty (Field Direct (-1))

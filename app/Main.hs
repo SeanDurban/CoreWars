@@ -1,111 +1,113 @@
-{-# LANGUAGE OverloadedStrings #-}
 import Control.Concurrent
 import Data.Sequence
 import Control.Monad
-import Ansi
 
 main = do
---  let dwarf = redcodeParser (readProg "./redcodeProg/Dwarf.txt") 1
---  let imp = redcodeParser (readProg "./redcodeProg/Imp.txt") 2
+  --load in sample redcode programs
   redcodeProg <- readFile "./redcodeProg/Dwarf.txt"
-  let dwarf = redcodeParser (readProg redcodeProg) 0
+  let dwarf = redcodeParser (readProg redcodeProg)
   redcodeProg2 <- readFile "./redcodeProg/Imp.txt"
-  let imp = redcodeParser (readProg redcodeProg2) 1
+  let imp = redcodeParser (readProg redcodeProg2)
   redcodeProg3 <- readFile "./redcodeProg/Gemini.txt"
-  let gemini = redcodeParser (readProg redcodeProg3) 2
---  let dwarf =readT2 "./redcodeProg/Dwarf.txt"
+  let gemini = redcodeParser (readProg redcodeProg3)
 
+  --Create core with redundant ADD instructions
   let baseCore = fromList $ map (getCoreAddr) [0..coreSize-1]
 
-  let gameCore = ( insertRedcode baseCore 0 gemini)
-  putStrLn $ "game core: " ++ showSeq gameCore
+  --insert the sample redcode programs into the core at the indexes specified
+  let gameCore = insertRedcode (insertRedcode (insertRedcode baseCore 0 dwarf) 16 imp) 10 dwarf
+  putStrLn $ "Start of game core: " ++ showSeq gameCore
 
-  m <- newMVar $ gameCore
+  --Create MVar with game core
+  coreMvar <- newMVar $ gameCore
 
-  index <- newMVar $ 2
-  index2 <- newMVar $ 13
+  --Create MVar with starting indexs of Redcode programs
+  index <- newMVar $ 0    --Dwarf
+  index2 <- newMVar $ 16  --Imp
+  index3 <- newMVar $ 10 -- Dwarf
 
-  runRedcode 2 m index
---  runRedcode 3 m index2
+  runProgram 1 coreMvar index
+  runProgram 2 coreMvar	index2
+--    runRedcode 2 coreMvar index2
+  --  runRedcode 3 coreMvar index3
 
-  threadDelay (10^8)
+  --delay the main thread to stop program from halting
+  threadDelay (10^9)
 --end main
 
+--Defined coreSize constant
+coreSize = 40
 
-readT2 fileName = do
-  redcodeProg <- readFile fileName
-  return (redcodeParser (readProg redcodeProg) 0)
-
-readRedcodeFile fileName =
-    readFile fileName >>= \redcodeProg ->
-    return (readProg redcodeProg)
---readProg :: String -> [[String]]
+--Takes String of Redcode program
+--Returns list of lines in the redcode program as a list of individual words in line
+readProg :: String -> [[String]]
 readProg redcodeProg =
   let
-  --redcodeProg <- readFile fileName
     progIn = lines redcodeProg
-    input = Prelude.filter stripComments progIn
+    input = Prelude.filter isCommentLine progIn
     inputFiltered = map (Prelude.filter (/= ',')) input
     moves =  map words inputFiltered
     in (moves)
 
-
-coreSize = 25
-
-
 --inserts the Redcode program into the core at index specified
 insertRedcode :: Seq CoreAddr ->Int -> Prog -> Seq CoreAddr
-insertRedcode core index (Prog _ _ []) = core
-insertRedcode core index (Prog pNo curI (move:moves)) =
-  insertRedcode (update index move core) ((index+1) `mod` coreSize) (Prog pNo curI moves)
+insertRedcode core index (Prog []) = core
+insertRedcode core index (Prog (move:moves)) =
+  insertRedcode (update index move core) ((index+1) `mod` coreSize) (Prog moves)
 
-runRedcode pNo coreMvar indexMvar= do
+--Run the redcode programs
+runProgram pNo coreMvar indexMVar = do
   forkIO $ do
+    runRedcode pNo coreMvar indexMVar
+
+
+--Runs the redcode program with program number (pNo) in the core stored in coreMvar
+--Starts at index stored at indexMVar
+runRedcode pNo coreMvar indexMvar= do
     forever $ do
     --attempt to secure Core
       core <- takeMVar coreMvar
       curI <- takeMVar indexMvar
-    --  goto (xStart+curI) 20 >> color c "_"
-      --putStrLn $ "i: " ++ show curI
-    --  printMove (curI `mod` coreSize) color
-  --    putStrLn $ "Prog"++show pNo ++ " acquired core\n"
       putStrLn $ "\n\nCurrent core state: " ++ (showSeq core) ++ "\n"
+      --Get current instruction
       let curCoreAddr = index core (curI `mod` coreSize)
-      putStrLn $ show pNo ++ " excuting instruction at i (" ++ show curI ++ ")    "++ show curCoreAddr ++ "\n"
-  --    checkDAT curCoreAddr
+      putStrLn $ "P" ++ show pNo ++ " excuting instruction at i (" ++ show curI ++ ")    "++ show curCoreAddr ++ "\n"
       case curCoreAddr of
         (CoreAddr DAT _ _) -> do
           -- Release core and set indexMVar as -1
           putMVar indexMvar (-1)
           putMVar coreMvar core
           terminateProg pNo
+        (CoreAddr SPL a _) -> do
+          --create another program at address in field A
+          let aIndex = applyAddrMode a curI core
+          forkIO $ do
+            newIndex <- newMVar $ aIndex
+            runRedcode (pNo+coreSize) coreMvar newIndex
+          putMVar indexMvar (curI+1)
+          putMVar coreMvar core
         (CoreAddr _ _ _) -> do
+          --excuted instruction and update both index and core
           let updatedCore = executeInstr core curCoreAddr curI
           let updatedIndex = (getNewIndex curCoreAddr curI) `mod` coreSize
+          --release core and sleep to avoid starvation
           putMVar coreMvar updatedCore
           putMVar indexMvar updatedIndex
-  --        putStrLn $ "Prog"++show pNo ++ " released core, new index:  " ++ show updatedIndex ++ "\n"
-          --release core and sleep to avoid starvation
-          threadDelay(10^6) --could make this random
+          threadDelay(10^6)
 
-printMove :: Int -> Colour -> IO()
-printMove n c =   goto (xStart+n) 20 >> color c "_"
-
-
-xStart = 10
 
 applyAddrMode :: Field -> Int -> Seq CoreAddr ->Int
 applyAddrMode (Field Immed n) curI core = (curI + n) `mod` coreSize
-applyAddrMode (Field Indirect n) curI core =  --want to go get value of that addr
+applyAddrMode (Field Indirect n) curI core =
   let
-    instr = index core (curI+n)  --get coreInstr at curI +n
+    instr = index core (curI+n)
     instrVal = extractBVal instr
     in (curI + instrVal) `mod` coreSize
 applyAddrMode (Field Direct n) curI core = (curI + n) `mod` coreSize
-applyAddrMode (Field AutoDec n) curI core = --n and treated as indirect then decr value at n
+applyAddrMode (Field AutoDec n) curI core =
   let
-    instr = index core (curI+n)  --get coreInstr at curI +n
-    instrVal = (extractBVal instr) -1--val = extractVal instr -1
+    instr = index core (curI+n)
+    instrVal = (extractBVal instr) -1
     in (curI + instrVal) `mod` coreSize
 
 getNewIndex :: CoreAddr -> Int -> Int
@@ -122,18 +124,20 @@ getNewIndex (CoreAddr CMP (Field addMode1 aVal) (Field addMode2 bVal)) curI =
     case (aVal - bVal) of
       0 -> (curI + 2)
       _ -> (curI + 1)
+--Default just to increment index/ got to next instruction
 getNewIndex _ curI =
   curI + 1
---need DJN CMP
+--need DJN
 
-
+--This is called once a DAT is executed
+--It puts the program in a forever loop rather than terminating it
+--This allows it to print out that it has been terminated at defined intervals
 terminateProg pNo =
   do
     forever $ do
       putStrLn $ "DAT executed!!  P" ++ show pNo ++ " has been terminated"
       threadDelay(10^8)
--- CoreAddr Instr Field Field
---Field AddrMode Int
+
 executeInstr :: Seq CoreAddr -> CoreAddr -> Int -> Seq CoreAddr
 executeInstr core (CoreAddr MOV (Field Immed aVal) b) curIndex =
   let
@@ -181,25 +185,22 @@ executeInstr core (CoreAddr SUB a b) curIndex =
     n2 = extractBVal bCoreAddr
     newBCoreAddr = updateCoreVal SUB bCoreAddr n1 n2
     in (update bIndex newBCoreAddr core)
-
 --All other instr don't change the core
--- JMP JMZ JMN DJN CMP
+-- (JMP JMZ JMN DJN CMP)
 executeInstr core _ _ = core
 
 
 extractAVal :: CoreAddr -> Int
 extractAVal (CoreAddr instr (Field _ val) b) = val
 extractAVal (CoreAddr instr (Empty) b) = 0
-
 extractBVal :: CoreAddr -> Int
 extractBVal (CoreAddr instr a (Field _ val)) = val
 extractBVal (CoreAddr instr a (Empty)) = 0
 
-
---Will need to add cases here to deal with Empty Fields
+--Takes a CoreAddr and applies the Instr given to it's a and b field
+--Returns the resulting CoreAddr
+-- n1, n2 represent the numbers (Int) to be added/subbed to the a and b field respectively
 updateCoreVal :: Instr -> CoreAddr -> Int -> Int -> CoreAddr
---updateCoreVal ADD (CoreAddr instr a (Field adrMode bVal)) _ n2 =
---  CoreAddr instr a (Field adrMode ((bVal + n2) `mod` coreSize))
 updateCoreVal ADD (CoreAddr instr (Field aAdrMode aVal) (Field bAdrMode bVal)) n1 n2 =
   CoreAddr instr (Field aAdrMode (aVal + n1)) (Field bAdrMode (bVal + n2))
 updateCoreVal SUB (CoreAddr instr (Field aAdrMode aVal) (Field bAdrMode bVal)) n1 n2 =
@@ -209,36 +210,30 @@ updateCoreVal ADD (CoreAddr instr (Empty) (Field bAdrMode bVal)) n1 n2 =
 updateCoreVal SUB (CoreAddr instr (Empty) (Field bAdrMode bVal)) n1 n2 =
   CoreAddr instr (Empty) (Field bAdrMode (bVal - n2))
 
+-- * *Parsing functions and types **
 
-extractAField :: CoreAddr -> Int
---extractAField _ (Field Direct n) _ = n
-extractAField _ = -1
-
-extractInstr :: CoreAddr -> Instr
---extractInstr MOV a b = MOV
-extractInstr _ = DAT
-
-sampleCoreAddr = CoreAddr DAT Empty $ Field Indirect 3
-
-sampleImp =Prog 1 0 [CoreAddr MOV (Field Direct 0) (Field Direct 1)]
-
-stripComments:: String -> Bool
-stripComments "" = False
-stripComments s
+--Function for filtering commented lines in input
+isCommentLine:: String -> Bool
+isCommentLine "" = False
+isCommentLine s
   | head s == ';' = False
   | otherwise = True
 
 --Redcode prog parser
-redcodeParser :: [[String]] -> Int -> Prog
-redcodeParser moves progNo =
-  Prog progNo 0 $ movesParser moves
+--Wrapper for Prog type constructor
+redcodeParser :: [[String]] -> Prog
+redcodeParser moves =
+  Prog $ movesParser moves
 
+--Takes string repesentation of instructions
+--returns corresponding list of CoreAddr type
 movesParser :: [[String]] -> [CoreAddr]
 movesParser [] = []
 movesParser (move:(moves)) =
   (moveParser move) : movesParser moves
 
-
+--Takes string repesentation of an instruction
+--returns corresponding CoreAddr type
 moveParser :: [String] -> CoreAddr
 moveParser move
   | instr == "DAT" = CoreAddr DAT Empty fieldA
@@ -253,6 +248,8 @@ moveParser move
     fieldA = fieldAParser move
     fieldB = fieldBParser move
 
+--Takes a string representing an instructions, Parses the field A part
+--Returns a Field type
 fieldAParser :: [String] -> Field
 fieldAParser move =
   Field addrMode $ read fieldVal
@@ -260,6 +257,8 @@ fieldAParser move =
          addrMode = addrModeParser $ head f
          fieldVal = fieldValParser addrMode f
 
+--Takes a string representing an instructions, Parses the field B part
+--Returns a Field type
 fieldBParser :: [String] -> Field
 fieldBParser move=
   Field addrMode $ read fieldVal
@@ -267,12 +266,18 @@ fieldBParser move=
          addrMode = addrModeParser $ head f
          fieldVal = fieldValParser addrMode f
 
+--Separates chars representing Addressing modes from value
 fieldValParser :: AddrMode -> String -> String
 fieldValParser Direct field
   | head field == '@' = tail field
+  | head field == '$' = tail field
+  | head field == '#' = tail field
+  | head field == '<' = tail field
   | otherwise = field
 fieldValParser _ field = tail field
 
+--Converts char repesenting Addressing Mode to a AddrMode type
+--Defaults to Direct
 addrModeParser :: Char -> AddrMode
 addrModeParser '<' = AutoDec
 addrModeParser '@' = Indirect
@@ -280,13 +285,19 @@ addrModeParser '#' = Immed
 addrModeParser '$' = Direct
 addrModeParser _ = Direct --Can not specify any addmode if Direct. this could be a sign or a num
 
+--Wrapper for showSeq
+--Starts showSeq2 at index 0
 showSeq :: Seq CoreAddr -> String
 showSeq core = showSeq2 core 0
 
+--Builds string representing a Seq CoreAddr
+--Each CoreAddr is printed on a new line
+--This is to be able to print a readable string of the Core
 showSeq2 :: Seq CoreAddr -> Int -> String
 showSeq2 core i
   | i == Data.Sequence.length core = "\n"
   | otherwise = "\n" ++ show i ++ ": " ++ show (index core i) ++ (showSeq2 core $ i+1)
+
 --MARS simulator data types
 data Core = Core (Seq CoreAddr)
   deriving (Show,Read)
@@ -307,7 +318,7 @@ getCoreAddr:: Int -> CoreAddr
 getCoreAddr n = CoreAddr ADD (Field Immed 0) (Field Direct 0)
 
 --redcode data types
---First in is the progNo
+--First int is the progNo
 --Second Int is the curIndex in MARS
-data Prog = Prog Int Int [CoreAddr]
+data Prog = Prog [CoreAddr]
   deriving (Show, Read)
