@@ -4,6 +4,6 @@
 ;assert CORESIZE % 5 == 0
 
 ADD	#5,	3
-SPL	2
+MOV	#0,	@2
 JMP	-2
 DAT     -1

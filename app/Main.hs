@@ -1,8 +1,13 @@
 import Control.Concurrent
 import Data.Sequence
 import Control.Monad
+import System.Random
+import System.Environment
 
 main = do
+  args <- getArgs
+  let noProg = Prelude.length args
+
   --load in sample redcode programs
   redcodeProg <- readFile "./redcodeProg/Dwarf.txt"
   let dwarf = redcodeParser (readProg redcodeProg)
@@ -11,12 +16,25 @@ main = do
   redcodeProg3 <- readFile "./redcodeProg/Gemini.txt"
   let gemini = redcodeParser (readProg redcodeProg3)
 
+  --read files as per args
+  --create list of redcode programs
+  --Generate the sequence of rand start indexes
+  -- insert those redcode prog at those indexes
+
+
+  --remove the index from the sequence / set too -1
+  --Have another thread checking at intervals which index are -1
+  --Print prog still alive and which terminated
+
+--s  let noProg = 3
+
   --Create core with redundant ADD instructions
   let baseCore = fromList $ map (getCoreAddr) [0..coreSize-1]
 
+--  let indexSeq = sequence $ Control.Monad.replicateM 3 $ randomRIO (0, coreSize)
   --insert the sample redcode programs into the core at the indexes specified
   let gameCore = insertRedcode (insertRedcode (insertRedcode baseCore 0 dwarf) 16 imp) 10 dwarf
-  putStrLn $ "Start of game core: " ++ showSeq gameCore
+  putStrLn $ "\nStart of game core: " ++ showSeq gameCore
 
   --Create MVar with game core
   coreMvar <- newMVar $ gameCore
@@ -28,16 +46,26 @@ main = do
 
   runProgram 1 coreMvar index
   runProgram 2 coreMvar	index2
---    runRedcode 2 coreMvar index2
-  --  runRedcode 3 coreMvar index3
+
 
   --delay the main thread to stop program from halting
   threadDelay (10^9)
+  putStrLn "Game is a draw"
 --end main
 
 --Defined coreSize constant
 coreSize = 40
 
+readFiles :: IO [String] -> [IO String]
+readFiles (prog:[]) =
+  do
+    file <- readFile $ "./redcodeProg/" ++ prog ++ ".txt"
+    file:[]
+readFiles (prog:progs) = do
+  (readFile $ "./redcodeProg/" ++ prog ++ ".txt") : readFiles progs
+
+
+randomise i = randomR(0, coreSize)
 --Takes String of Redcode program
 --Returns list of lines in the redcode program as a list of individual words in line
 readProg :: String -> [[String]]
@@ -84,8 +112,10 @@ runRedcode pNo coreMvar indexMvar= do
           forkIO $ do
             newIndex <- newMVar $ aIndex
             runRedcode (pNo+coreSize) coreMvar newIndex
+          --continue current program at next instruction. Release mVars and sleep
           putMVar indexMvar (curI+1)
           putMVar coreMvar core
+          threadDelay(10^6)
         (CoreAddr _ _ _) -> do
           --excuted instruction and update both index and core
           let updatedCore = executeInstr core curCoreAddr curI
@@ -94,7 +124,6 @@ runRedcode pNo coreMvar indexMvar= do
           putMVar coreMvar updatedCore
           putMVar indexMvar updatedIndex
           threadDelay(10^6)
-
 
 applyAddrMode :: Field -> Int -> Seq CoreAddr ->Int
 applyAddrMode (Field Immed n) curI core = (curI + n) `mod` coreSize
