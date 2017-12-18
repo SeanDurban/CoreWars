@@ -4,68 +4,74 @@ import Control.Monad
 import System.Random
 import System.Environment
 
+--Assumes redcode programs are txt files
+--Found at ./redcode
+
 main = do
   args <- getArgs
-  let noProg = Prelude.length args
+  --  let noProg = Prelude.length args
+  -- ** I did attempt to load progs based on args
+  -- This attempt is seen in genProgs
+  -- But was unable to figure out how to carry IO Prog correctly in time
 
   --load in sample redcode programs
-  redcodeProg <- readFile "./redcodeProg/Dwarf.txt"
+  redcodeProg <- readFile "./redcode/Dwarf.txt"
   let dwarf = redcodeParser (readProg redcodeProg)
-  redcodeProg2 <- readFile "./redcodeProg/Imp.txt"
+  redcodeProg2 <- readFile "./redcode/Imp.txt"
   let imp = redcodeParser (readProg redcodeProg2)
-  redcodeProg3 <- readFile "./redcodeProg/Gemini.txt"
-  let gemini = redcodeParser (readProg redcodeProg3)
 
-  --read files as per args
-  --create list of redcode programs
-  --Generate the sequence of rand start indexes
-  -- insert those redcode prog at those indexes
-
-
-  --remove the index from the sequence / set too -1
-  --Have another thread checking at intervals which index are -1
-  --Print prog still alive and which terminated
-
---s  let noProg = 3
-
+  putStrLn $ "\nNumber of programs in this game: " ++ show noProg
   --Create core with redundant ADD instructions
-  let baseCore = fromList $ map (getCoreAddr) [0..coreSize-1]
+  let baseCore = fromList $ map (baseCoreAddr) [0..coreSize-1]
+  -- Randomly generate starting positions in Core
+  -- As random can overwrite one another
+  i <- randomRIO(0, coreSize-1)
+  i2 <- randomRIO(0, coreSize-1)
+  i3 <- randomRIO(0, coreSize-1)
 
---  let indexSeq = sequence $ Control.Monad.replicateM 3 $ randomRIO (0, coreSize)
+  --Create MVar with starting indexs of Redcode programs
+  index <- newMVar $ i    --Dwarf
+  index2 <- newMVar $ i2  --Imp
+  index3 <- newMVar $ i3 -- Dwarf2
+
   --insert the sample redcode programs into the core at the indexes specified
-  let gameCore = insertRedcode (insertRedcode (insertRedcode baseCore 0 dwarf) 16 imp) 10 dwarf
+  let gameCore = insertRedcode (insertRedcode (insertRedcode baseCore i dwarf) i2 imp) i3 dwarf
   putStrLn $ "\nStart of game core: " ++ showSeq gameCore
 
   --Create MVar with game core
   coreMvar <- newMVar $ gameCore
 
-  --Create MVar with starting indexs of Redcode programs
-  index <- newMVar $ 0    --Dwarf
-  index2 <- newMVar $ 16  --Imp
-  index3 <- newMVar $ 10 -- Dwarf
+  --Create stats MVar which will display current Stats on each turn
+  -- [Number remaining/alive, number total]
+  gameStats <- newMVar $ [noProg, noProg]
 
-  runProgram 1 coreMvar index
-  runProgram 2 coreMvar	index2
-
+  runProgram 1 coreMvar index gameStats
+  runProgram 2 coreMvar index2 gameStats
+  runProgram 3 coreMvar index3 gameStats
 
   --delay the main thread to stop program from halting
-  threadDelay (10^9)
+  threadDelay (10^10)
   putStrLn "Game is a draw"
+  threadDelay(10^8)  --Delay again so result seen
 --end main
 
 --Defined coreSize constant
 coreSize = 40
+noProg = 3 ::Int
+--Generates Prog objects for all the prog names given
+--Return IO Prog
+genProgs :: [String] -> [IO Prog]
+genProgs ([]) = []
+genProgs (prog:progs) =
+  readFiles prog : genProgs progs
 
-readFiles :: IO [String] -> [IO String]
-readFiles (prog:[]) =
-  do
-    file <- readFile $ "./redcodeProg/" ++ prog ++ ".txt"
-    file:[]
-readFiles (prog:progs) = do
-  (readFile $ "./redcodeProg/" ++ prog ++ ".txt") : readFiles progs
+--Read file and return the parsed Prog
+readFiles :: String -> IO Prog
+readFiles progName = do
+  file <- (readFile $ "./redcode/" ++ progName ++ ".txt")
+  let prog = redcodeParser $ readProg file
+  return prog
 
-
-randomise i = randomR(0, coreSize)
 --Takes String of Redcode program
 --Returns list of lines in the redcode program as a list of individual words in line
 readProg :: String -> [[String]]
@@ -83,38 +89,51 @@ insertRedcode core index (Prog []) = core
 insertRedcode core index (Prog (move:moves)) =
   insertRedcode (update index move core) ((index+1) `mod` coreSize) (Prog moves)
 
---Run the redcode programs
-runProgram pNo coreMvar indexMVar = do
+--Run the redcode programs on their own thread
+runProgram pNo coreMvar indexMVar gameStats= do
   forkIO $ do
-    runRedcode pNo coreMvar indexMVar
+    runRedcode pNo coreMvar indexMVar gameStats
 
 
 --Runs the redcode program with program number (pNo) in the core stored in coreMvar
 --Starts at index stored at indexMVar
-runRedcode pNo coreMvar indexMvar= do
+runRedcode :: Int -> MVar (Seq CoreAddr) -> MVar Int -> MVar [Int] -> IO ()
+runRedcode pNo coreMvar indexMvar gameStats= do
     forever $ do
     --attempt to secure Core
       core <- takeMVar coreMvar
       curI <- takeMVar indexMvar
-      putStrLn $ "\n\nCurrent core state: " ++ (showSeq core) ++ "\n"
+      stats <- takeMVar gameStats
+      case (head stats) of
+        1 -> announceWinner pNo
+        _ -> do
+          putStrLn $ "\n\nTotal number of prog: "++ show (last stats) ++ "\t\tNumber alive: " ++ show (head stats)
+      putStrLn $ "\nCurrent core state: " ++ (showSeq core) ++ "\n"
       --Get current instruction
       let curCoreAddr = index core (curI `mod` coreSize)
       putStrLn $ "P" ++ show pNo ++ " excuting instruction at i (" ++ show curI ++ ")    "++ show curCoreAddr ++ "\n"
       case curCoreAddr of
         (CoreAddr DAT _ _) -> do
           -- Release core and set indexMVar as -1
+          -- update gameStats to show prog terminated
+          let newGameStats = ((head stats) - 1):(tail stats)
           putMVar indexMvar (-1)
           putMVar coreMvar core
+          putMVar gameStats newGameStats
           terminateProg pNo
         (CoreAddr SPL a _) -> do
           --create another program at address in field A
+          --With the next unused programNo
           let aIndex = applyAddrMode a curI core
+          let noProg = (last stats)
           forkIO $ do
             newIndex <- newMVar $ aIndex
-            runRedcode (pNo+coreSize) coreMvar newIndex
+            runRedcode (noProg+1) coreMvar newIndex gameStats
           --continue current program at next instruction. Release mVars and sleep
+          let newGameStats = ((head stats) + 1):[(noProg+1)]
           putMVar indexMvar (curI+1)
           putMVar coreMvar core
+          putMVar gameStats newGameStats
           threadDelay(10^6)
         (CoreAddr _ _ _) -> do
           --excuted instruction and update both index and core
@@ -123,6 +142,7 @@ runRedcode pNo coreMvar indexMvar= do
           --release core and sleep to avoid starvation
           putMVar coreMvar updatedCore
           putMVar indexMvar updatedIndex
+          putMVar gameStats stats
           threadDelay(10^6)
 
 applyAddrMode :: Field -> Int -> Seq CoreAddr ->Int
@@ -153,20 +173,30 @@ getNewIndex (CoreAddr CMP (Field addMode1 aVal) (Field addMode2 bVal)) curI =
     case (aVal - bVal) of
       0 -> (curI + 2)
       _ -> (curI + 1)
+getNewIndex (CoreAddr DJN (Field addMode1 aVal) (Field addMode2 bVal)) curI =
+    case (bVal-1) of
+      0 -> (curI + 1)
+      _ -> (curI + aVal)
 --Default just to increment index/ got to next instruction
 getNewIndex _ curI =
   curI + 1
---need DJN
 
---This is called once a DAT is executed
---It puts the program in a forever loop rather than terminating it
---This allows it to print out that it has been terminated at defined intervals
+--This is called once a DAT is execute, prints message and terminates thread
 terminateProg pNo =
   do
-    forever $ do
       putStrLn $ "DAT executed!!  P" ++ show pNo ++ " has been terminated"
-      threadDelay(10^8)
+      tId <- myThreadId
+      killThread tId
 
+announceWinner pNo =
+  do
+    putStrLn $ "P" ++ show pNo ++ " has won the game!"
+    tId <- myThreadId
+    killThread tId
+
+--Executes the Instruction given relative to curIndex given
+--Applies result of this execution to the core
+--Returns updated core with instruction applied
 executeInstr :: Seq CoreAddr -> CoreAddr -> Int -> Seq CoreAddr
 executeInstr core (CoreAddr MOV (Field Immed aVal) b) curIndex =
   let
@@ -343,8 +373,10 @@ data Field = Field AddrMode Int | Empty
 data AddrMode = Immed | Indirect | Direct | AutoDec
   deriving (Show, Read, Eq)
 
-getCoreAddr:: Int -> CoreAddr
-getCoreAddr n = CoreAddr ADD (Field Immed 0) (Field Direct 0)
+--Provides Basic coreAddr which essentially has no effect
+--Used instead of MOV to allow user to see Imp progress easier
+baseCoreAddr:: Int -> CoreAddr
+baseCoreAddr n = CoreAddr ADD (Field Immed 0) (Field Direct 0)
 
 --redcode data types
 --First int is the progNo

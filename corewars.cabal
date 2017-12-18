@@ -8,7 +8,8 @@ license:             OtherLicense
 cabal-version:       >=1.10
 
 executable corewars
-  hs-source-dirs:      app
+  hs-source-dirs:      redcode
+                       ,app
   main-is:             Main.hs
   other-modules:
   ghc-options:         -threaded -rtsopts -with-rtsopts=-N
